@@ -8,9 +8,7 @@ _NODE_LABELS = {
     "extract_pdf": "PDF-Text wird extrahiert (Mistral OCR)...",
     "analyze_document": "Dokument wird analysiert und Teilfragen erstellt...",
     "analyze_followup": "Nachfolgefrage wird analysiert...",
-    "retrieve_rag": "StGB/StPO-Kommentare werden abgerufen (RAGIE)...",
-    "search_case_law": "Aktuelle Rechtsprechung wird gesucht (Google Search)...",
-    "synthesize_step": "Zwischenanalyse wird erstellt...",
+    "process_sub_questions": "Teilfragen werden parallel verarbeitet (RAG + Websuche + Synthese)...",
     "final_synthesis": "Gesamtgutachten wird erstellt...",
     "followup_respond": "Antwort auf Nachfolgefrage wird erstellt...",
 }
