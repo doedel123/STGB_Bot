@@ -24,4 +24,5 @@ class AgentState(TypedDict):
     sub_questions: list[SubQuestion]
     current_sub_q_index: int
     final_analysis: Optional[str]
+    previous_analysis: Optional[str]  # prior analysis for follow-up context
     error: Optional[str]

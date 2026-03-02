@@ -1,17 +1,36 @@
 import chainlit as cl
 from langchain_core.messages import HumanMessage
 
-from agent.graph import graph
+from agent.graph import graph, followup_graph
 
 # Display names for step indicators
 _NODE_LABELS = {
     "extract_pdf": "PDF-Text wird extrahiert (Mistral OCR)...",
     "analyze_document": "Dokument wird analysiert und Teilfragen erstellt...",
+    "analyze_followup": "Nachfolgefrage wird analysiert...",
     "retrieve_rag": "StGB/StPO-Kommentare werden abgerufen (RAGIE)...",
     "search_case_law": "Aktuelle Rechtsprechung wird gesucht (Google Search)...",
     "synthesize_step": "Zwischenanalyse wird erstellt...",
     "final_synthesis": "Gesamtgutachten wird erstellt...",
+    "followup_respond": "Antwort auf Nachfolgefrage wird erstellt...",
 }
+
+# Nodes that emit the final message content
+_RESPONSE_NODES = {"respond", "followup_respond"}
+
+
+def _extract_content(state_update: dict) -> str:
+    """Extract plain-text content from a node's message list."""
+    for m in state_update.get("messages", []):
+        raw = m.content if hasattr(m, "content") else str(m)
+        if isinstance(raw, list):
+            raw = "".join(
+                b.get("text", "") if isinstance(b, dict) else str(b)
+                for b in raw
+            )
+        if raw:
+            return raw
+    return ""
 
 
 @cl.on_chat_start
@@ -22,6 +41,8 @@ async def on_chat_start():
             "Laden Sie eine Anklageschrift oder ein anderes strafrechtliches "
             "Dokument als PDF hoch, und ich erstelle eine umfassende "
             "strafrechtliche Analyse im Gutachtenstil.\n\n"
+            "Nach der Analyse koennen Sie **Nachfolgefragen** zum selben "
+            "Dokument stellen, ohne das PDF erneut hochzuladen.\n\n"
             "Die Analyse nutzt:\n"
             "- StGB/StPO-Kommentarliteratur (RAGIE RAG)\n"
             "- Aktuelle Rechtsprechung (Google Search)\n"
@@ -44,14 +65,27 @@ async def on_message(msg: cl.Message):
                 pdf_filename = element.name
                 break
 
-    if pdf_bytes is None:
-        await cl.Message(
-            content="Bitte laden Sie ein PDF-Dokument hoch, um die Analyse zu starten."
-        ).send()
+    user_text = (msg.content or "").strip()
+
+    # ── CASE 1: New PDF uploaded → run full analysis ──────────────────
+    if pdf_bytes is not None:
+        await _handle_pdf_analysis(pdf_bytes, pdf_filename, user_text)
         return
 
-    # Detect if user asked a specific question or just uploaded
-    user_text = (msg.content or "").strip()
+    # ── CASE 2: No PDF, but session has context → follow-up question ──
+    stored_pdf_content = cl.user_session.get("pdf_content")
+    if stored_pdf_content and user_text:
+        await _handle_followup(user_text)
+        return
+
+    # ── CASE 3: No PDF, no session context → prompt user ─────────────
+    await cl.Message(
+        content="Bitte laden Sie ein PDF-Dokument hoch, um die Analyse zu starten."
+    ).send()
+
+
+async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: str):
+    """Run the full analysis pipeline on a newly uploaded PDF."""
     user_query = user_text if user_text else None
 
     if user_query:
@@ -63,7 +97,6 @@ async def on_message(msg: cl.Message):
             content=f"PDF **{pdf_filename}** empfangen. Vollstaendige Analyse wird gestartet..."
         ).send()
 
-    # Prepare initial state
     initial_state = {
         "messages": [
             HumanMessage(content=user_text or f"Analysiere: {pdf_filename}")
@@ -76,35 +109,82 @@ async def on_message(msg: cl.Message):
         "sub_questions": [],
         "current_sub_q_index": 0,
         "final_analysis": None,
+        "previous_analysis": None,
         "error": None,
     }
 
-    # Use astream (async) so we don't block Chainlit's event loop
     final_content = ""
+    saved_pdf_content = None
+    saved_document_summary = None
 
     async for node_output in graph.astream(initial_state):
-        # node_output is a dict like {"node_name": {state_update}}
         for node_name, state_update in node_output.items():
-            # Show step indicator
             if node_name in _NODE_LABELS:
                 step = cl.Step(name=_NODE_LABELS[node_name], type="tool")
                 await step.send()
 
-            # Capture the final analysis when respond node fires
-            if node_name == "respond" and "messages" in state_update:
-                for m in state_update["messages"]:
-                    raw = m.content if hasattr(m, "content") else str(m)
-                    # Gemini may return list of content blocks
-                    if isinstance(raw, list):
-                        raw = "".join(
-                            b.get("text", "") if isinstance(b, dict) else str(b)
-                            for b in raw
-                        )
-                    if raw:
-                        final_content = raw
+            # Capture intermediate state for session persistence
+            if state_update.get("pdf_content"):
+                saved_pdf_content = state_update["pdf_content"]
+            if state_update.get("document_summary"):
+                saved_document_summary = state_update["document_summary"]
 
-    # Send the final analysis as a single message
+            if node_name in _RESPONSE_NODES:
+                content = _extract_content(state_update)
+                if content:
+                    final_content = content
+
     if final_content:
         await cl.Message(content=final_content).send()
+        # Persist analysis in session for follow-up questions
+        cl.user_session.set("pdf_content", saved_pdf_content)
+        cl.user_session.set("document_summary", saved_document_summary)
+        cl.user_session.set("pdf_filename", pdf_filename)
+        cl.user_session.set("previous_analysis", final_content)
     else:
         await cl.Message(content="Die Analyse konnte nicht erstellt werden.").send()
+
+
+async def _handle_followup(user_text: str):
+    """Run the follow-up pipeline using the session's stored analysis context."""
+    pdf_filename = cl.user_session.get("pdf_filename", "PDF")
+
+    await cl.Message(
+        content=f"Nachfolgefrage zum Dokument **{pdf_filename}** wird bearbeitet..."
+    ).send()
+
+    followup_state = {
+        "messages": [HumanMessage(content=user_text)],
+        "user_query": user_text,
+        "pdf_bytes": None,
+        "pdf_filename": pdf_filename,
+        "pdf_content": cl.user_session.get("pdf_content"),
+        "document_summary": cl.user_session.get("document_summary"),
+        "sub_questions": [],
+        "current_sub_q_index": 0,
+        "final_analysis": None,
+        "previous_analysis": cl.user_session.get("previous_analysis"),
+        "error": None,
+    }
+
+    final_content = ""
+
+    async for node_output in followup_graph.astream(followup_state):
+        for node_name, state_update in node_output.items():
+            if node_name in _NODE_LABELS:
+                step = cl.Step(name=_NODE_LABELS[node_name], type="tool")
+                await step.send()
+
+            if node_name in _RESPONSE_NODES:
+                content = _extract_content(state_update)
+                if content:
+                    final_content = content
+
+    if final_content:
+        await cl.Message(content=final_content).send()
+        # Update previous_analysis so chained follow-ups see latest context
+        cl.user_session.set("previous_analysis", final_content)
+    else:
+        await cl.Message(
+            content="Die Nachfolgefrage konnte nicht beantwortet werden."
+        ).send()
