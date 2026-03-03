@@ -2,7 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from agent.state import AgentState
 from prompts.followup import SYSTEM_PROMPT_FOLLOWUP_RESPOND
-from services.gemini_client import llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text
 
 
 def followup_respond_node(state: AgentState) -> dict:

@@ -2,7 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.final_analysis import SYSTEM_PROMPT
-from services.gemini_client import llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text
 
 
 def final_synthesis_node(state: AgentState) -> dict:

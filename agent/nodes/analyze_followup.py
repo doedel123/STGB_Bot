@@ -4,7 +4,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.followup import SYSTEM_PROMPT_FOLLOWUP_ANALYZE
-from services.gemini_client import llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text
 
 
 def analyze_followup_node(state: AgentState) -> dict:

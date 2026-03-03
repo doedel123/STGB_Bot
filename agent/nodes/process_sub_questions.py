@@ -14,7 +14,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.synthesize import SYSTEM_PROMPT
-from services.gemini_client import llm, extract_text, search_with_grounding
+from services.gemini_client import llm_with_fallback as llm, extract_text, search_with_grounding
 from services.ragie_client import retrieve, format_chunks
 
 

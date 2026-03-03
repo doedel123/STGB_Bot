@@ -4,7 +4,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.analyze_document import SYSTEM_PROMPT_FULL, SYSTEM_PROMPT_FOCUSED
-from services.gemini_client import llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text
 
 
 def analyze_document_node(state: AgentState) -> dict:
