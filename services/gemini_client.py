@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from google import genai
@@ -9,9 +10,12 @@ from utils.config import GEMINI_API_KEY, MODEL_NAME, FALLBACK_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 
-# ── LangChain-wrapped models for use in LangGraph nodes ─────────────
+# Max seconds to wait for the primary model before falling back (async path).
+_ASYNC_TIMEOUT = 25
 
-llm = ChatGoogleGenerativeAI(
+# ── LangChain-wrapped models ────────────────────────────────────────
+
+_primary_llm = ChatGoogleGenerativeAI(
     model=MODEL_NAME,
     google_api_key=GEMINI_API_KEY,
     temperature=0.2,
@@ -23,8 +27,45 @@ _fallback_llm = ChatGoogleGenerativeAI(
     temperature=0.2,
 )
 
-# Expose a model with automatic fallback via LangChain's .with_fallbacks()
-llm_with_fallback = llm.with_fallbacks([_fallback_llm])
+
+class _LLMWithFallback:
+    """Thin wrapper that tries the primary model and falls back on any error.
+
+    For async calls (``ainvoke``) a timeout is enforced so the SDK's internal
+    retries are cut short and the fallback model is tried quickly.
+    """
+
+    def invoke(self, messages, **kwargs):
+        """Sync invoke — used by sequential LangGraph nodes."""
+        try:
+            return _primary_llm.invoke(messages, **kwargs)
+        except Exception as e:
+            logger.warning(
+                "Primary model %s unavailable (%s). Falling back to %s.",
+                MODEL_NAME, type(e).__name__, FALLBACK_MODEL_NAME,
+            )
+            return _fallback_llm.invoke(messages, **kwargs)
+
+    async def ainvoke(self, messages, **kwargs):
+        """Async invoke — used by parallel processing node.
+
+        Enforces a timeout so we don't waste time on SDK-level retries
+        when the primary model is overloaded.
+        """
+        try:
+            return await asyncio.wait_for(
+                _primary_llm.ainvoke(messages, **kwargs),
+                timeout=_ASYNC_TIMEOUT,
+            )
+        except (Exception, asyncio.TimeoutError) as e:
+            logger.warning(
+                "Primary model %s unavailable (%s). Falling back to %s.",
+                MODEL_NAME, type(e).__name__, FALLBACK_MODEL_NAME,
+            )
+            return await _fallback_llm.ainvoke(messages, **kwargs)
+
+
+llm_with_fallback = _LLMWithFallback()
 
 
 def extract_text(response: BaseMessage) -> str:
@@ -84,11 +125,10 @@ def search_with_grounding(query: str) -> dict:
         except Exception as e:
             if model == MODEL_NAME:
                 logger.warning(
-                    "Primary model %s failed (%s), falling back to %s",
+                    "Search grounding: %s failed (%s), falling back to %s",
                     MODEL_NAME, e, FALLBACK_MODEL_NAME,
                 )
                 continue
             raise
 
-    # Should never reach here, but just in case
     raise RuntimeError("Both primary and fallback models failed")
