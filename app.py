@@ -1,3 +1,7 @@
+from engineio.payload import Payload
+
+Payload.max_decode_packets = 100  # default 16 is too low for parallel processing
+
 import chainlit as cl
 from langchain_core.messages import HumanMessage
 
