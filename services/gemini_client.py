@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import threading
+import time
 
 from google import genai
 from google.genai import types
@@ -10,8 +12,10 @@ from utils.config import GEMINI_API_KEY, MODEL_NAME, FALLBACK_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 
-# Max seconds to wait for the primary model before falling back (async path).
-_ASYNC_TIMEOUT = 25
+# ── Timeouts & circuit breaker ───────────────────────────────────────
+
+_TIMEOUT = 20          # Max seconds to wait for the primary model
+_COOLDOWN = 300        # Skip primary for 5 minutes after a failure
 
 # ── LangChain-wrapped models ────────────────────────────────────────
 
@@ -28,40 +32,80 @@ _fallback_llm = ChatGoogleGenerativeAI(
 )
 
 
-class _LLMWithFallback:
-    """Thin wrapper that tries the primary model and falls back on any error.
+def _sync_invoke_with_timeout(llm, messages, kwargs, timeout):
+    """Run a sync LLM invoke in a daemon thread with a timeout."""
+    result = [None]
+    error = [None]
 
-    For async calls (``ainvoke``) a timeout is enforced so the SDK's internal
-    retries are cut short and the fallback model is tried quickly.
+    def _target():
+        try:
+            result[0] = llm.invoke(messages, **kwargs)
+        except Exception as e:
+            error[0] = e
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+
+    if thread.is_alive():
+        raise TimeoutError(f"LLM invoke timed out after {timeout}s")
+    if error[0]:
+        raise error[0]
+    return result[0]
+
+
+class _LLMWithFallback:
+    """LLM wrapper with timeout, automatic fallback, and circuit breaker.
+
+    - Tries the primary model first with a timeout.
+    - On ANY failure (503, timeout, etc.) immediately switches to fallback.
+    - After a failure, the primary model is skipped for ``_COOLDOWN`` seconds
+      so subsequent calls go directly to the fallback without waiting.
     """
 
+    def __init__(self):
+        self._primary_down_until = 0.0
+
+    def _primary_is_down(self) -> bool:
+        if time.time() < self._primary_down_until:
+            return True
+        return False
+
+    def _mark_primary_down(self, error):
+        self._primary_down_until = time.time() + _COOLDOWN
+        logger.warning(
+            "Primary model %s unavailable (%s). "
+            "Falling back to %s for the next %ds.",
+            MODEL_NAME, error, FALLBACK_MODEL_NAME, _COOLDOWN,
+        )
+
     def invoke(self, messages, **kwargs):
-        """Sync invoke — used by sequential LangGraph nodes."""
+        """Sync invoke with timeout and circuit breaker."""
+        if self._primary_is_down():
+            logger.info("Primary model in cooldown — using %s.", FALLBACK_MODEL_NAME)
+            return _fallback_llm.invoke(messages, **kwargs)
+
         try:
-            return _primary_llm.invoke(messages, **kwargs)
-        except Exception as e:
-            logger.warning(
-                "Primary model %s unavailable (%s). Falling back to %s.",
-                MODEL_NAME, type(e).__name__, FALLBACK_MODEL_NAME,
+            return _sync_invoke_with_timeout(
+                _primary_llm, messages, kwargs, timeout=_TIMEOUT,
             )
+        except Exception as e:
+            self._mark_primary_down(e)
             return _fallback_llm.invoke(messages, **kwargs)
 
     async def ainvoke(self, messages, **kwargs):
-        """Async invoke — used by parallel processing node.
+        """Async invoke with timeout and circuit breaker."""
+        if self._primary_is_down():
+            logger.info("Primary model in cooldown — using %s.", FALLBACK_MODEL_NAME)
+            return await _fallback_llm.ainvoke(messages, **kwargs)
 
-        Enforces a timeout so we don't waste time on SDK-level retries
-        when the primary model is overloaded.
-        """
         try:
             return await asyncio.wait_for(
                 _primary_llm.ainvoke(messages, **kwargs),
-                timeout=_ASYNC_TIMEOUT,
+                timeout=_TIMEOUT,
             )
         except (Exception, asyncio.TimeoutError) as e:
-            logger.warning(
-                "Primary model %s unavailable (%s). Falling back to %s.",
-                MODEL_NAME, type(e).__name__, FALLBACK_MODEL_NAME,
-            )
+            self._mark_primary_down(e)
             return await _fallback_llm.ainvoke(messages, **kwargs)
 
 
@@ -97,10 +141,15 @@ _genai_client = genai.Client(api_key=GEMINI_API_KEY)
 def search_with_grounding(query: str) -> dict:
     """Call Gemini with Google Search grounding enabled.
 
-    Tries the primary model first; on failure falls back to the fallback model.
-    Returns dict with 'text' and 'sources' (list of {uri, title}).
+    Uses the circuit breaker from ``llm_with_fallback`` to decide whether
+    to try the primary model or skip directly to the fallback.
     """
-    for model in (MODEL_NAME, FALLBACK_MODEL_NAME):
+    if llm_with_fallback._primary_is_down():
+        models_to_try = (FALLBACK_MODEL_NAME,)
+    else:
+        models_to_try = (MODEL_NAME, FALLBACK_MODEL_NAME)
+
+    for model in models_to_try:
         try:
             response = _genai_client.models.generate_content(
                 model=model,
@@ -124,10 +173,7 @@ def search_with_grounding(query: str) -> dict:
 
         except Exception as e:
             if model == MODEL_NAME:
-                logger.warning(
-                    "Search grounding: %s failed (%s), falling back to %s",
-                    MODEL_NAME, e, FALLBACK_MODEL_NAME,
-                )
+                llm_with_fallback._mark_primary_down(e)
                 continue
             raise
 
