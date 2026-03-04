@@ -44,22 +44,9 @@ def _extract_content(state_update: dict) -> str:
 
 @cl.on_chat_start
 async def on_chat_start():
-    await cl.Message(
-        content=(
-            "![Bodden-Bot Icon](/public/bodden-icon.png)\n\n"
-            "Willkommen beim Bodden-Bot.\n\n"
-            "Laden Sie eine Anklageschrift oder ein anderes strafrechtliches "
-            "Pamphlet als PDF hoch, und ich erstelle eine umfassende "
-            "strafrechtliche Analyse im Gutachtenstil inklusive "
-            "Fehler-/Widerspruchsbericht.\n\n"
-            "Nach der Analyse koennen Sie **Nachfolgefragen** zum selben "
-            "Dokument stellen, ohne das PDF erneut hochzuladen.\n\n"
-            "Die Analyse nutzt:\n"
-            "- StGB/StPO-Kommentarliteratur (RAGIE RAG)\n"
-            "- Aktuelle Rechtsprechung (Google Search)\n"
-            "- Gemini 3.1 Pro als Analyse-LLM"
-        )
-    ).send()
+    # Keep chat start side-effect free to avoid duplicate welcome messages
+    # when the websocket reconnects during long-running analysis.
+    return
 
 
 @cl.on_message
