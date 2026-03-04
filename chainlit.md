@@ -1,6 +1,10 @@
-# StGB-Agent
+# Bodden-Bot
 
-Willkommen beim **StGB-Agenten** - Ihrem KI-Assistenten fuer strafrechtliche Analysen.
+![Bodden-Bot Icon](/public/bodden-icon.png)
+
+Willkommen beim Bodden-Bot.
+
+Ihr KI-Assistent fuer strafrechtliche Analysen.
 
 ## So funktioniert es
 

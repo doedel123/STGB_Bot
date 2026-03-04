@@ -4,6 +4,11 @@ from agent.state import AgentState
 from prompts.followup import SYSTEM_PROMPT_FOLLOWUP_RESPOND
 from services.gemini_client import llm_with_fallback as llm, extract_text
 
+DISCLAIMER = (
+    "Keine Rechtsberatung. Bitte durch eine zugelassene Rechtsanwaeltin/"
+    "einen zugelassenen Rechtsanwalt verifizieren lassen."
+)
+
 
 def followup_respond_node(state: AgentState) -> dict:
     """Produce a focused answer to the follow-up question from sub-question syntheses.
@@ -33,6 +38,8 @@ def followup_respond_node(state: AgentState) -> dict:
     ])
 
     content = extract_text(response)
+    if DISCLAIMER not in content:
+        content = f"{content.rstrip()}\n\n{DISCLAIMER}"
 
     return {
         "final_analysis": content,

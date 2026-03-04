@@ -1,4 +1,5 @@
 from engineio.payload import Payload
+from pathlib import Path
 
 Payload.max_decode_packets = 100  # default 16 is too low for parallel processing
 
@@ -7,13 +8,19 @@ from langchain_core.messages import HumanMessage
 
 from agent.graph import graph, followup_graph
 
+# Chainlit expects this parent dir to exist for per-session upload folders.
+Path(__file__).resolve().parent.joinpath(".files").mkdir(parents=True, exist_ok=True)
+
 # Display names for step indicators
 _NODE_LABELS = {
     "extract_pdf": "PDF-Text wird extrahiert (Mistral OCR)...",
+    "fact_extraction": "Fakten und Behauptungen werden extrahiert...",
     "analyze_document": "Dokument wird analysiert und Teilfragen erstellt...",
     "analyze_followup": "Nachfolgefrage wird analysiert...",
     "process_sub_questions": "Teilfragen werden parallel verarbeitet (RAG + Websuche + Synthese)...",
+    "allegation_validation": "Behauptungen werden gegen Fakten validiert...",
     "final_synthesis": "Gesamtgutachten wird erstellt...",
+    "red_team": "Red-Team-Pruefung auf verpasste Fehler laeuft...",
     "followup_respond": "Antwort auf Nachfolgefrage wird erstellt...",
 }
 
@@ -39,10 +46,12 @@ def _extract_content(state_update: dict) -> str:
 async def on_chat_start():
     await cl.Message(
         content=(
-            "Willkommen beim **StGB-Agenten**.\n\n"
+            "![Bodden-Bot Icon](/public/bodden-icon.png)\n\n"
+            "Willkommen beim Bodden-Bot.\n\n"
             "Laden Sie eine Anklageschrift oder ein anderes strafrechtliches "
-            "Dokument als PDF hoch, und ich erstelle eine umfassende "
-            "strafrechtliche Analyse im Gutachtenstil.\n\n"
+            "Pamphlet als PDF hoch, und ich erstelle eine umfassende "
+            "strafrechtliche Analyse im Gutachtenstil inklusive "
+            "Fehler-/Widerspruchsbericht.\n\n"
             "Nach der Analyse koennen Sie **Nachfolgefragen** zum selben "
             "Dokument stellen, ohne das PDF erneut hochzuladen.\n\n"
             "Die Analyse nutzt:\n"
@@ -107,9 +116,18 @@ async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: s
         "pdf_bytes": pdf_bytes,
         "pdf_filename": pdf_filename,
         "pdf_content": None,
+        "raw_text": None,
+        "document_structure": {},
         "document_summary": None,
         "sub_questions": [],
         "current_sub_q_index": 0,
+        "facts": [],
+        "allegations": [],
+        "contradictions": [],
+        "validation_report": {},
+        "red_team_findings": [],
+        "citations": [],
+        "issues_to_check": [],
         "final_analysis": None,
         "previous_analysis": None,
         "error": None,
@@ -118,6 +136,12 @@ async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: s
     final_content = ""
     saved_pdf_content = None
     saved_document_summary = None
+    saved_facts = []
+    saved_allegations = []
+    saved_validation_report = {}
+    saved_contradictions = []
+    saved_citations = []
+    saved_issues_to_check = []
 
     async for node_output in graph.astream(initial_state):
         for node_name, state_update in node_output.items():
@@ -130,6 +154,18 @@ async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: s
                 saved_pdf_content = state_update["pdf_content"]
             if state_update.get("document_summary"):
                 saved_document_summary = state_update["document_summary"]
+            if state_update.get("facts") is not None:
+                saved_facts = state_update.get("facts", [])
+            if state_update.get("allegations") is not None:
+                saved_allegations = state_update.get("allegations", [])
+            if state_update.get("validation_report") is not None:
+                saved_validation_report = state_update.get("validation_report", {})
+            if state_update.get("contradictions") is not None:
+                saved_contradictions = state_update.get("contradictions", [])
+            if state_update.get("citations") is not None:
+                saved_citations = state_update.get("citations", [])
+            if state_update.get("issues_to_check") is not None:
+                saved_issues_to_check = state_update.get("issues_to_check", [])
 
             if node_name in _RESPONSE_NODES:
                 content = _extract_content(state_update)
@@ -143,6 +179,12 @@ async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: s
         cl.user_session.set("document_summary", saved_document_summary)
         cl.user_session.set("pdf_filename", pdf_filename)
         cl.user_session.set("previous_analysis", final_content)
+        cl.user_session.set("facts", saved_facts)
+        cl.user_session.set("allegations", saved_allegations)
+        cl.user_session.set("validation_report", saved_validation_report)
+        cl.user_session.set("contradictions", saved_contradictions)
+        cl.user_session.set("citations", saved_citations)
+        cl.user_session.set("issues_to_check", saved_issues_to_check)
     else:
         await cl.Message(content="Die Analyse konnte nicht erstellt werden.").send()
 
@@ -161,9 +203,18 @@ async def _handle_followup(user_text: str):
         "pdf_bytes": None,
         "pdf_filename": pdf_filename,
         "pdf_content": cl.user_session.get("pdf_content"),
+        "raw_text": cl.user_session.get("pdf_content"),
+        "document_structure": {},
         "document_summary": cl.user_session.get("document_summary"),
         "sub_questions": [],
         "current_sub_q_index": 0,
+        "facts": cl.user_session.get("facts", []),
+        "allegations": cl.user_session.get("allegations", []),
+        "contradictions": cl.user_session.get("contradictions", []),
+        "validation_report": cl.user_session.get("validation_report", {}),
+        "red_team_findings": [],
+        "citations": cl.user_session.get("citations", []),
+        "issues_to_check": cl.user_session.get("issues_to_check", []),
         "final_analysis": None,
         "previous_analysis": cl.user_session.get("previous_analysis"),
         "error": None,

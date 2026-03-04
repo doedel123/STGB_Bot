@@ -1,10 +1,10 @@
 # StGB-Agent
 
-Ein KI-gestützter **strafrechtlicher Analyse-Agent**, der Anklageschriften und andere strafrechtliche Dokumente automatisch im **Gutachtenstil** analysiert. Der Agent kombiniert OCR-Textextraktion, juristische Kommentarliteratur (RAG) und aktuelle Rechtsprechung zu einem umfassenden strafrechtlichen Gutachten.
+Ein KI-gestuetzter **strafrechtlicher Analyse-Agent**, der Anklageschriften und andere strafrechtliche Dokumente im **Gutachtenstil** analysiert und zusaetzlich als **Anklageschrift-Debugger** auf innere Fehler prueft. Der Agent kombiniert OCR-Textextraktion, juristische Kommentarliteratur (RAG) und aktuelle Rechtsprechung zu einem verteidigungsorientierten Ergebnis.
 
 ## Funktionsweise
 
-Der StGB-Agent arbeitet als **Multi-Step-Pipeline** auf Basis von [LangGraph](https://github.com/langchain-ai/langgraph). Ein hochgeladenes PDF durchläuft sechs spezialisierte Verarbeitungsschritte:
+Der StGB-Agent arbeitet als **Multi-Step-Pipeline** auf Basis von [LangGraph](https://github.com/langchain-ai/langgraph). Ein hochgeladenes PDF durchlaeuft folgende Verarbeitungsschritte:
 
 ```
 PDF Upload
@@ -16,23 +16,34 @@ PDF Upload
 └────────┬────────────┘
          ▼
 ┌─────────────────────┐
-│  2. Dokumentanalyse  │  Gemini analysiert den Sachverhalt, identifiziert
-│     (Gemini)         │  Straftatbestände und zerlegt die Prüfung in Teilfragen
+│  2. Fakten-Extraktion│ Trennung: Tatsachen vs Behauptungen/Wertungen
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  3. Dokumentanalyse  │ Teilfragen + issues_to_check (Widerspruch/Belege)
 └────────┬────────────┘
          ▼
 ┌─────────────────────────────────────────────────────┐
-│  Schleife: Für jede Teilfrage (3-7 Fragen)          │
+│  Schleife: Fuer jede Teilfrage (3-7 Fragen)          │
 │                                                      │
-│  3. RAG-Retrieval ──► StGB/StPO-Kommentare (RAGIE)  │
-│  4. Websuche ────────► Aktuelle Rechtsprechung       │
-│     (Gemini + Google Search Grounding)               │
-│  5. Zwischensynthese ► Teilanalyse im Gutachtenstil  │
+│  4. RAG-Retrieval ──► StGB/StPO-Kommentare (RAGIE)  │
+│  5. Websuche ────────► Aktuelle Rechtsprechung       │
+│  6. Zwischensynthese ► Gutachten + Belegmapping      │
 │                                                      │
 └────────┬────────────────────────────────────────────┘
          ▼
 ┌─────────────────────┐
-│  6. Gesamtgutachten  │  Alle Teilanalysen werden zu einem vollständigen
-│     (Gemini)         │  strafrechtlichen Gutachten zusammengeführt
+│  7. Allegation-Check │  Behauptung→Fakten-Mapping, Support-Staerke,
+│                      │  Widersprueche, Zirkelschluss-Hinweise
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  8. Gesamtgutachten  │  Gutachten + Fehler-/Widerspruchsbericht
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  9. Red-Team-Pass    │  verpasste Probleme, fehlende Zitate,
+│                      │  ueberkonfidente Aussagen
 └─────────────────────┘
 ```
 
@@ -40,12 +51,27 @@ PDF Upload
 
 | Schritt | Node | Beschreibung |
 |---------|------|-------------|
-| 1 | `extract_pdf` | Extrahiert Text aus dem hochgeladenen PDF mittels **Mistral OCR** (Base64-Upload) |
-| 2 | `analyze_document` | **Gemini** identifiziert Dokumenttyp, Angeklagte, relevante Paragraphen und zerlegt die Prüfung in 3-7 juristische Teilfragen |
-| 3 | `retrieve_rag` | Für jede Teilfrage werden relevante Passagen aus **StGB/StPO-Kommentaren** über RAGIE abgerufen (Top-6, Reranking) |
-| 4 | `search_case_law` | **Gemini mit Google Search Grounding** sucht aktuelle Rechtsprechung (Urteile, Beschlüsse) zur jeweiligen Rechtsfrage |
-| 5 | `synthesize_step` | **Gemini** erstellt pro Teilfrage eine Analyse im Gutachtenstil (Obersatz, Definition, Subsumtion, Ergebnis) |
-| 6 | `final_synthesis` | Alle Teilanalysen werden zu einem zusammenhängenden **Gesamtgutachten** mit Sachverhalt, strafrechtlicher Würdigung, Konkurrenzen und Gesamtergebnis zusammengeführt |
+| 1 | `extract_pdf` | Extrahiert Text aus dem hochgeladenen PDF mittels **Mistral OCR** |
+| 2 | `fact_extraction` | Trennt **Fakten** von **Behauptungen/Wertungen** und extrahiert Entitaeten |
+| 3 | `analyze_document` | Erstellt 3-7 Teilfragen plus `issues_to_check` (Widerspruch, Belegluecken, Spekulation, Prozessuales) |
+| 4 | `process_sub_questions` | Fuehrt je Teilfrage parallel RAG + Websuche + Synthese mit Fakten/Behauptungs-Kontext aus |
+| 5 | `allegation_validation` | Bewertet jede Behauptung gegen Fakten (`strong|medium|weak|none`) und erkennt Widersprueche |
+| 6 | `final_synthesis` | Fuehrt alles zu Gutachtenstil + strukturiertem Fehler-/Widerspruchsbericht zusammen |
+| 7 | `red_team` | Prueft finalen Text adversarial auf verpasste Punkte, fehlende Zitate, Ueberkonfidenz |
+| 8 | `respond` | Formatiert finale Antwort inkl. compact citations + Sicherheits-Hinweis |
+
+### Ausgabeformat
+
+Die Endausgabe enthaelt immer:
+
+1. Gutachtenstil-Wuerdigung (pro Tatkomplex)
+2. Separaten **Fehler-/Widerspruchsbericht** mit:
+- unbelegten Behauptungen
+- inneren Widerspruechen
+- Zirkelschluessen/Spekulationen
+- prozessualen Auffaelligkeiten (wenn ableitbar)
+3. Kompakte Citations-Sektion
+4. Hinweis: **Keine Rechtsberatung, anwaltlich verifizieren**
 
 ### Zwei Analyse-Modi
 
@@ -73,16 +99,22 @@ StGB-Agent/
 │   ├── state.py                   # AgentState TypedDict
 │   └── nodes/
 │       ├── extract_pdf.py         # PDF-Textextraktion (Mistral OCR)
+│       ├── fact_extraction.py     # Fakten/Behauptungen + Entitaeten
 │       ├── analyze_document.py    # Dokumentanalyse + Teilfragen-Zerlegung
 │       ├── retrieve_rag.py        # RAG-Retrieval aus RAGIE
 │       ├── search_case_law.py     # Rechtsprechungssuche (Google Search)
 │       ├── synthesize_step.py     # Zwischenanalyse pro Teilfrage
+│       ├── allegation_validation.py # Behauptungsvalidierung + Widerspruchsdetektion
 │       ├── final_synthesis.py     # Gesamtgutachten-Erstellung
+│       ├── red_team.py            # Adversarialer QA-Pass
 │       └── respond.py             # Antwort-Formatierung
 ├── prompts/
+│   ├── fact_extraction.py         # Prompt fuer Fakt/Behauptungs-Trennung
+│   ├── allegation_validation.py   # Prompt fuer Behauptungsvalidierung
 │   ├── analyze_document.py        # System-Prompts für Dokumentanalyse
 │   ├── synthesize.py              # System-Prompt für Gutachtenstil
-│   └── final_analysis.py          # System-Prompt für Gesamtgutachten
+│   ├── final_analysis.py          # System-Prompt fuer Gesamtanalyse + Fehlerbericht
+│   └── red_team.py                # Prompt fuer Red-Team-Addendum
 ├── services/
 │   ├── gemini_client.py           # Gemini LLM + Google Search Grounding
 │   ├── mistral_ocr.py             # Mistral OCR Client
@@ -140,7 +172,23 @@ MODEL_NAME=gemini-3.1-pro-preview   # optional, Standard: gemini-3.1-pro-preview
 chainlit run app.py
 ```
 
-Die Anwendung startet unter `http://localhost:8000`. Lade ein PDF hoch (z.B. eine Anklageschrift) und der Agent erstellt automatisch ein strafrechtliches Gutachten.
+Die Anwendung startet unter `http://localhost:8000`. Lade ein PDF hoch (z.B. eine Anklageschrift) und der Agent erstellt automatisch ein Gutachten plus Fehler-/Widerspruchsbericht.
+
+## Deployment auf Railway
+
+Dieses Repo ist fuer Railway vorbereitet (`Dockerfile`, `railway.toml`, `start.sh`).
+
+1. Repository nach GitHub pushen.
+2. In Railway: `New Project` -> `Deploy from GitHub repo`.
+3. Unter `Variables` diese Secrets setzen:
+   - `GEMINI_API_KEY`
+   - `MISTRAL_API_KEY`
+   - `RAGIE_API_KEY`
+   - optional: `MODEL_NAME`
+4. Deploy starten.
+5. Railway vergibt die URL automatisch; `PORT` wird von Railway gesetzt und durch `start.sh` genutzt.
+
+Hinweis: Upload-Dateien liegen waehrend der Laufzeit unter `.files`. Fuer persistente Uploads ueber Deploys hinweg einen Volume-Mount nutzen.
 
 ## Nutzung
 
@@ -148,7 +196,15 @@ Die Anwendung startet unter `http://localhost:8000`. Lade ein PDF hoch (z.B. ein
 2. Lade ein strafrechtliches PDF-Dokument hoch (Anklageschrift, Urteil, Beschluss, etc.)
 3. **Optional**: Stelle eine konkrete Frage zum Dokument (z.B. "Liegt ein Rücktritt vom Versuch vor?")
 4. Der Agent durchläuft die Pipeline und zeigt den Fortschritt in Echtzeit an
-5. Am Ende erhältst du ein vollständiges Gutachten mit Quellenangaben
+5. Am Ende erhaeltst du ein vollstaendiges Gutachten **und** einen separaten Fehler-/Widerspruchsbericht
+
+## Test
+
+Smoke-Test (ohne externe API-Aufrufe):
+
+```bash
+python3 -m unittest tests/test_anklageschrift_debugger_smoke.py
+```
 
 ## Lizenz
 

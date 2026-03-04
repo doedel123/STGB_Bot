@@ -16,4 +16,8 @@ def extract_pdf_node(state: AgentState) -> dict:
     if not text.strip():
         return {"error": "Das PDF scheint keinen extrahierbaren Text zu enthalten."}
 
-    return {"pdf_content": text}
+    return {
+        "pdf_content": text,
+        "raw_text": text,
+        "document_structure": {"source": "ocr", "has_page_blocks": False},
+    }

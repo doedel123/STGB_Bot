@@ -9,6 +9,8 @@ which dramatically reduces total latency compared to the sequential loop.
 """
 
 import asyncio
+import json
+import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -19,6 +21,33 @@ from services.ragie_client import retrieve, format_chunks
 
 
 # ── Per-sub-question helpers ─────────────────────────────────────────
+
+
+def _tokenize(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]{3,}", text.lower()))
+
+
+def _match_items_for_question(
+    question: str, items: list[dict], text_key: str = "text", limit: int = 6
+) -> list[dict]:
+    q_tokens = _tokenize(question)
+    if not q_tokens:
+        return items[:limit]
+
+    scored: list[tuple[float, dict]] = []
+    for item in items:
+        item_text = str(item.get(text_key, ""))
+        item_tokens = _tokenize(item_text)
+        if not item_tokens:
+            continue
+        overlap = len(q_tokens & item_tokens)
+        if overlap == 0:
+            continue
+        score = overlap / len(q_tokens | item_tokens)
+        scored.append((score, item))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored[:limit]]
 
 
 async def _retrieve_rag(sub_q: dict) -> str:
@@ -64,11 +93,32 @@ async def _search_case_law(sub_q: dict, summary: str) -> str:
         return f"Websuche fehlgeschlagen: {e}"
 
 
-async def _synthesize(sub_q: dict, summary: str) -> str:
+async def _synthesize(
+    sub_q: dict,
+    summary: str,
+    facts: list[dict],
+    allegations: list[dict],
+    validation_report: dict,
+    global_issues: list[str],
+) -> str:
     """Create a partial analysis for a single sub-question (async)."""
+    related_facts = _match_items_for_question(sub_q["question"], facts)
+    related_allegations = _match_items_for_question(sub_q["question"], allegations)
+    related_validation = {
+        a.get("id"): validation_report.get(a.get("id"))
+        for a in related_allegations
+        if a.get("id") in validation_report
+    }
+
+    issues_to_check = sub_q.get("issues_to_check") or global_issues
+
     user_msg = (
         f"## Sachverhalt\n{summary}\n\n"
         f"## Rechtsfrage\n{sub_q['question']}\n\n"
+        f"## Relevante Fakten\n{json.dumps(related_facts, ensure_ascii=False)}\n\n"
+        f"## Relevante Behauptungen\n{json.dumps(related_allegations, ensure_ascii=False)}\n\n"
+        f"## Issues to check\n{json.dumps(issues_to_check, ensure_ascii=False)}\n\n"
+        f"## Vorliegende Validierungshinweise\n{json.dumps(related_validation, ensure_ascii=False)}\n\n"
         f"## Kommentarliteratur (StGB/StPO)\n{sub_q.get('rag_results', 'Nicht verfuegbar')}\n\n"
         f"## Aktuelle Rechtsprechung\n{sub_q.get('search_results', 'Nicht verfuegbar')}"
     )
@@ -80,7 +130,14 @@ async def _synthesize(sub_q: dict, summary: str) -> str:
     return extract_text(response)
 
 
-async def _process_single(sub_q: dict, summary: str) -> dict:
+async def _process_single(
+    sub_q: dict,
+    summary: str,
+    facts: list[dict],
+    allegations: list[dict],
+    validation_report: dict,
+    global_issues: list[str],
+) -> dict:
     """Process one sub-question end-to-end.
 
     Step 1: RAG + Web Search in parallel
@@ -95,7 +152,14 @@ async def _process_single(sub_q: dict, summary: str) -> dict:
     updated = {**sub_q, "rag_results": rag_results, "search_results": search_results}
 
     # Step 2 — synthesize using both sources
-    synthesis = await _synthesize(updated, summary)
+    synthesis = await _synthesize(
+        updated,
+        summary,
+        facts,
+        allegations,
+        validation_report,
+        global_issues,
+    )
     updated["synthesis"] = synthesis
 
     return updated
@@ -108,9 +172,23 @@ async def process_sub_questions_node(state: AgentState) -> dict:
     """Process ALL sub-questions in parallel and return the completed list."""
     summary = state.get("document_summary", "")
     sub_questions = state["sub_questions"]
+    facts = list(state.get("facts") or [])
+    allegations = list(state.get("allegations") or [])
+    validation_report = dict(state.get("validation_report") or {})
+    global_issues = list(state.get("issues_to_check") or [])
 
     results = await asyncio.gather(
-        *[_process_single(sq, summary) for sq in sub_questions]
+        *[
+            _process_single(
+                sq,
+                summary,
+                facts,
+                allegations,
+                validation_report,
+                global_issues,
+            )
+            for sq in sub_questions
+        ]
     )
 
     return {
