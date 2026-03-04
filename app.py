@@ -4,12 +4,16 @@ from pathlib import Path
 Payload.max_decode_packets = 100  # default 16 is too low for parallel processing
 
 import chainlit as cl
+from chainlit.context import context
 from langchain_core.messages import HumanMessage
 
 from agent.graph import graph, followup_graph
 
 # Chainlit expects this parent dir to exist for per-session upload folders.
 Path(__file__).resolve().parent.joinpath(".files").mkdir(parents=True, exist_ok=True)
+
+# Guard against repeated welcome messages on websocket reconnects.
+_WELCOME_SENT_THREADS: set[str] = set()
 
 # Display names for step indicators
 _NODE_LABELS = {
@@ -44,9 +48,28 @@ def _extract_content(state_update: dict) -> str:
 
 @cl.on_chat_start
 async def on_chat_start():
-    # Keep chat start side-effect free to avoid duplicate welcome messages
-    # when the websocket reconnects during long-running analysis.
-    return
+    thread_id = getattr(context.session, "thread_id", None)
+    if thread_id and thread_id in _WELCOME_SENT_THREADS:
+        return
+    if thread_id:
+        _WELCOME_SENT_THREADS.add(thread_id)
+
+    await cl.Message(
+        content=(
+            "![Bodden-Bot Icon](/public/bodden-icon.png)\n\n"
+            "Willkommen beim Bodden-Bot.\n\n"
+            "Laden Sie eine Anklageschrift oder ein anderes strafrechtliches "
+            "Dokument als PDF hoch, und ich erstelle eine umfassende "
+            "strafrechtliche Analyse im Gutachtenstil inklusive "
+            "Fehler-/Widerspruchsbericht.\n\n"
+            "Nach der Analyse koennen Sie **Nachfolgefragen** zum selben "
+            "Dokument stellen, ohne das PDF erneut hochzuladen.\n\n"
+            "Die Analyse nutzt:\n"
+            "- StGB/StPO-Kommentarliteratur (RAGIE RAG)\n"
+            "- Aktuelle Rechtsprechung (Google Search)\n"
+            "- Gemini 3.1 Pro als Analyse-LLM"
+        )
+    ).send()
 
 
 @cl.on_message
