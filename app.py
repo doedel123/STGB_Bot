@@ -8,6 +8,7 @@ from chainlit.context import context
 from langchain_core.messages import HumanMessage
 
 from agent.graph import graph, followup_graph
+from services.gemini_client import set_provider
 
 # Chainlit expects this parent dir to exist for per-session upload folders.
 Path(__file__).resolve().parent.joinpath(".files").mkdir(parents=True, exist_ok=True)
@@ -46,6 +47,12 @@ def _extract_content(state_update: dict) -> str:
     return ""
 
 
+_PROVIDER_LABELS = {
+    "gemini": "Gemini 3.1 Pro (Fallback: Gemini 2.5 Pro)",
+    "openai": "ChatGPT 5.4 Pro",
+}
+
+
 @cl.on_chat_start
 async def on_chat_start():
     thread_id = getattr(context.session, "thread_id", None)
@@ -54,10 +61,37 @@ async def on_chat_start():
     if thread_id:
         _WELCOME_SENT_THREADS.add(thread_id)
 
-    await cl.Message(
+    # ── Model selection ──────────────────────────────────────────────
+    res = await cl.AskActionMessage(
         content=(
             "![Bodden-Bot Icon](/public/bodden-icon.png)\n\n"
-            "Willkommen beim Bodden-Bot.\n\n"
+            "Willkommen beim **Bodden-Bot**.\n\n"
+            "Bitte waehlen Sie das Analyse-Modell:"
+        ),
+        actions=[
+            cl.Action(
+                name="gemini",
+                payload={"provider": "gemini"},
+                label="Gemini 3.1 Pro",
+            ),
+            cl.Action(
+                name="openai",
+                payload={"provider": "openai"},
+                label="ChatGPT 5.4 Pro",
+            ),
+        ],
+    ).send()
+
+    provider = "gemini"
+    if res and res.get("payload"):
+        provider = res["payload"]["provider"]
+
+    cl.user_session.set("provider", provider)
+    set_provider(provider)
+
+    await cl.Message(
+        content=(
+            f"Modell: **{_PROVIDER_LABELS[provider]}**\n\n"
             "Laden Sie eine Anklageschrift oder ein anderes strafrechtliches "
             "Dokument als PDF hoch, und ich erstelle eine umfassende "
             "strafrechtliche Analyse im Gutachtenstil inklusive "
@@ -67,7 +101,7 @@ async def on_chat_start():
             "Die Analyse nutzt:\n"
             "- StGB/StPO-Kommentarliteratur (RAGIE RAG)\n"
             "- Aktuelle Rechtsprechung (Google Search)\n"
-            "- Gemini 3.1 Pro als Analyse-LLM"
+            f"- {_PROVIDER_LABELS[provider]} als Analyse-LLM"
         )
     ).send()
 
@@ -107,6 +141,7 @@ async def on_message(msg: cl.Message):
 
 async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: str):
     """Run the full analysis pipeline on a newly uploaded PDF."""
+    set_provider(cl.user_session.get("provider", "gemini"))
     user_query = user_text if user_text else None
 
     if user_query:
@@ -201,6 +236,7 @@ async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: s
 
 async def _handle_followup(user_text: str):
     """Run the follow-up pipeline using the session's stored analysis context."""
+    set_provider(cl.user_session.get("provider", "gemini"))
     pdf_filename = cl.user_session.get("pdf_filename", "PDF")
 
     await cl.Message(

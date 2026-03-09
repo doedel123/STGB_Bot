@@ -16,3 +16,5 @@ MISTRAL_API_KEY = _require("MISTRAL_API_KEY")
 RAGIE_API_KEY = _require("RAGIE_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3.1-pro-preview")
 FALLBACK_MODEL_NAME = os.getenv("FALLBACK_MODEL_NAME", "gemini-2.5-pro")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # optional, only needed for OpenAI provider
+OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-5.4-pro-2026-03-05")
