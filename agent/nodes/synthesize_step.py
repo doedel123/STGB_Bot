@@ -2,11 +2,12 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.synthesize import SYSTEM_PROMPT
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 
 def synthesize_step_node(state: AgentState) -> dict:
     """Synthesize RAG context + search results into a partial analysis for the current sub-question."""
+    ensure_provider(state.get("provider"))
     idx = state["current_sub_q_index"]
     sub_q = state["sub_questions"][idx]
     summary = state.get("document_summary", "")

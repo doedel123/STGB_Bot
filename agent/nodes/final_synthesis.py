@@ -5,7 +5,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.final_analysis import SYSTEM_PROMPT
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ def _summarize_validation(validation_report: dict) -> str:
 
 def final_synthesis_node(state: AgentState) -> dict:
     """Produce the comprehensive legal opinion from all sub-question syntheses."""
+    ensure_provider(state.get("provider"))
     summary = state.get("document_summary", "")
     facts = state.get("facts", [])
     allegations = state.get("allegations", [])

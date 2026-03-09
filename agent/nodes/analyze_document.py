@@ -5,7 +5,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.analyze_document import SYSTEM_PROMPT_FULL, SYSTEM_PROMPT_FOCUSED
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ def _compact_items(items: list[dict], title: str, limit: int = 10) -> str:
 
 def analyze_document_node(state: AgentState) -> dict:
     """Analyze extracted PDF text: summarize and decompose into sub-questions."""
+    ensure_provider(state.get("provider"))
     pdf_content = state["pdf_content"]
     user_query = state.get("user_query")
     facts = list(state.get("facts") or [])

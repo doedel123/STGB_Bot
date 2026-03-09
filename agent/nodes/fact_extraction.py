@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.state import AgentState, Fact, Allegation, Citation
 from prompts.fact_extraction import SYSTEM_PROMPT
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,7 @@ def _build_citations(facts: list[Fact], allegations: list[Allegation]) -> list[C
 
 def fact_extraction_node(state: AgentState) -> dict:
     """Extract facts vs allegations from raw OCR text."""
+    ensure_provider(state.get("provider"))
     raw_text = state.get("raw_text") or state.get("pdf_content")
     if not raw_text:
         return {"error": "Keine Rohdaten fuer Faktenextraktion verfuegbar."}

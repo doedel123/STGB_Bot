@@ -4,7 +4,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.followup import SYSTEM_PROMPT_FOLLOWUP_ANALYZE
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 
 def analyze_followup_node(state: AgentState) -> dict:
@@ -13,6 +13,7 @@ def analyze_followup_node(state: AgentState) -> dict:
     This is a lighter version of ``analyze_document_node`` that does NOT send
     the full PDF text to the LLM — only the summary — making it faster and cheaper.
     """
+    ensure_provider(state.get("provider"))
     user_query = state["user_query"]
     document_summary = state.get("document_summary", "")
     previous_analysis = state.get("previous_analysis", "")

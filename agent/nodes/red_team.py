@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.state import AgentState, RedTeamFinding
 from prompts.red_team import SYSTEM_PROMPT
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,7 @@ def _append_addendum(final_text: str, findings: list[RedTeamFinding]) -> str:
 
 def red_team_node(state: AgentState) -> dict:
     """Adversarially review final synthesis and append actionable addendum."""
+    ensure_provider(state.get("provider"))
     logger.info("red_team: start")
 
     heuristic_findings = _heuristic_findings(state)

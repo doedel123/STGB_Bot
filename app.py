@@ -154,6 +154,7 @@ async def _handle_pdf_analysis(pdf_bytes: bytes, pdf_filename: str, user_text: s
         ).send()
 
     initial_state = {
+        "provider": cl.user_session.get("provider", "gemini"),
         "messages": [
             HumanMessage(content=user_text or f"Analysiere: {pdf_filename}")
         ],
@@ -244,6 +245,7 @@ async def _handle_followup(user_text: str):
     ).send()
 
     followup_state = {
+        "provider": cl.user_session.get("provider", "gemini"),
         "messages": [HumanMessage(content=user_text)],
         "user_query": user_text,
         "pdf_bytes": None,

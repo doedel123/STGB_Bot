@@ -2,7 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from agent.state import AgentState
 from prompts.followup import SYSTEM_PROMPT_FOLLOWUP_RESPOND
-from services.gemini_client import llm_with_fallback as llm, extract_text
+from services.gemini_client import llm_with_fallback as llm, extract_text, ensure_provider
 
 DISCLAIMER = (
     "Keine Rechtsberatung. Bitte durch eine zugelassene Rechtsanwaeltin/"
@@ -17,6 +17,7 @@ def followup_respond_node(state: AgentState) -> dict:
     structure — it creates a concise, targeted response in Gutachtenstil that
     directly answers the user's follow-up question.
     """
+    ensure_provider(state.get("provider"))
     user_query = state["user_query"]
     summary = state.get("document_summary", "")
 

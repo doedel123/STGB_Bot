@@ -2,7 +2,7 @@
 
 For each sub-question the following steps run concurrently:
   1. RAG retrieval (RAGIE) + Web search (Gemini Google Search) — in parallel
-  2. Synthesis (Gemini) — after both sources are available
+  2. Synthesis (active provider) — after both sources are available
 
 All sub-questions are processed at the same time via ``asyncio.gather``,
 which dramatically reduces total latency compared to the sequential loop.
@@ -16,7 +16,12 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agent.state import AgentState
 from prompts.synthesize import SYSTEM_PROMPT
-from services.gemini_client import llm_with_fallback as llm, extract_text, search_with_grounding
+from services.gemini_client import (
+    llm_with_fallback as llm,
+    extract_text,
+    search_with_grounding,
+    ensure_provider,
+)
 from services.ragie_client import retrieve, format_chunks
 
 
@@ -100,8 +105,10 @@ async def _synthesize(
     allegations: list[dict],
     validation_report: dict,
     global_issues: list[str],
+    provider: str,
 ) -> str:
     """Create a partial analysis for a single sub-question (async)."""
+    ensure_provider(provider)
     related_facts = _match_items_for_question(sub_q["question"], facts)
     related_allegations = _match_items_for_question(sub_q["question"], allegations)
     related_validation = {
@@ -137,6 +144,7 @@ async def _process_single(
     allegations: list[dict],
     validation_report: dict,
     global_issues: list[str],
+    provider: str,
 ) -> dict:
     """Process one sub-question end-to-end.
 
@@ -159,6 +167,7 @@ async def _process_single(
         allegations,
         validation_report,
         global_issues,
+        provider,
     )
     updated["synthesis"] = synthesis
 
@@ -170,6 +179,8 @@ async def _process_single(
 
 async def process_sub_questions_node(state: AgentState) -> dict:
     """Process ALL sub-questions in parallel and return the completed list."""
+    provider = state.get("provider", "gemini")
+    ensure_provider(provider)
     summary = state.get("document_summary", "")
     sub_questions = state["sub_questions"]
     facts = list(state.get("facts") or [])
@@ -186,6 +197,7 @@ async def process_sub_questions_node(state: AgentState) -> dict:
                 allegations,
                 validation_report,
                 global_issues,
+                provider,
             )
             for sq in sub_questions
         ]

@@ -67,6 +67,7 @@ class SubQuestion(TypedDict):
 
 
 class AgentState(TypedDict):
+    provider: str
     messages: Annotated[list[BaseMessage], add_messages]
     user_query: Optional[str]  # concrete user question (None = full analysis)
     pdf_bytes: Optional[bytes]
