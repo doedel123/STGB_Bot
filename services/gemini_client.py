@@ -46,7 +46,7 @@ def ensure_provider(provider: str | None) -> str:
 
 # ── Timeouts & circuit breaker ───────────────────────────────────────
 
-_TIMEOUT = 20                 # Max seconds to wait for the primary Gemini model
+_TIMEOUT = 120                # Max seconds to wait for the primary Gemini model
 _OPENAI_TIMEOUT = 420         # Reasoning over OCR-heavy legal docs can exceed 3 min
 _OPENAI_REQUEST_TIMEOUT = 30  # Keep create/retrieve requests short; we poll ourselves
 _OPENAI_POLL_INTERVAL = 2.0
