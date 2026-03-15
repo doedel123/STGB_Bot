@@ -11,7 +11,7 @@ def retrieve(query: str, top_k: int = 6, partition: str | None = None) -> list[d
     Args:
         query: The search query.
         top_k: Maximum number of chunks to return.
-        partition: Optional partition name to scope the search (e.g. "stgb", "stpo").
+        partition: Optional partition name to scope the search (e.g. "strafrecht").
 
     Returns a list of dicts with keys: text, score, document_name.
     """

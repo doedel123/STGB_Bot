@@ -18,6 +18,6 @@ MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3.1-pro-preview")
 FALLBACK_MODEL_NAME = os.getenv("FALLBACK_MODEL_NAME", "gemini-2.5-pro")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # optional, only needed for OpenAI provider
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-5.4-2026-03-05")
-OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium")
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high")
 OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "16000"))
 OPENAI_VERBOSITY = os.getenv("OPENAI_VERBOSITY", "low")

@@ -57,21 +57,10 @@ def _match_items_for_question(
 
 async def _retrieve_rag(sub_q: dict) -> str:
     """Run RAG retrieval for a single sub-question (async wrapper)."""
-    context_needed = sub_q.get("context_needed", "both")
-
     try:
-        if context_needed == "both":
-            # Query both partitions in parallel
-            chunks_stgb, chunks_stpo = await asyncio.gather(
-                asyncio.to_thread(retrieve, sub_q["question"], 4, "stgb"),
-                asyncio.to_thread(retrieve, sub_q["question"], 4, "stpo"),
-            )
-            chunks = chunks_stgb + chunks_stpo
-            chunks.sort(key=lambda c: c["score"], reverse=True)
-        else:
-            chunks = await asyncio.to_thread(
-                retrieve, sub_q["question"], 6, context_needed
-            )
+        chunks = await asyncio.to_thread(
+            retrieve, sub_q["question"], 6, "strafrecht"
+        )
         return format_chunks(chunks)
     except Exception as e:
         return f"RAG-Abfrage fehlgeschlagen: {e}"
