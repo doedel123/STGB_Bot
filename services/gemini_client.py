@@ -11,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from utils.config import (
     GEMINI_API_KEY, MODEL_NAME, FALLBACK_MODEL_NAME,
     OPENAI_API_KEY, OPENAI_MODEL_NAME, OPENAI_MAX_OUTPUT_TOKENS,
-    OPENAI_REASONING_EFFORT, OPENAI_VERBOSITY,
+    OPENAI_REASONING_EFFORT, OPENAI_VERBOSITY, OPENAI_VECTOR_STORE_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,12 @@ _gemini_fallback = ChatGoogleGenerativeAI(
     google_api_key=GEMINI_API_KEY,
     temperature=0.2,
 )
+
+if OPENAI_API_KEY and not OPENAI_VECTOR_STORE_ID:
+    logger.warning(
+        "OPENAI_API_KEY is set but OPENAI_VECTOR_STORE_ID is empty. "
+        "Commentary retrieval via file_search will be unavailable."
+    )
 
 # ── OpenAI — direct SDK usage (bypasses LangChain's buggy Responses API) ─
 
@@ -122,17 +128,63 @@ def _langchain_to_openai_payload(messages):
 
 
 def _parse_openai_response(response) -> AIMessage:
-    """Extract text from OpenAI Responses API response → LangChain AIMessage."""
-    if getattr(response, "output_text", ""):
-        return AIMessage(content=response.output_text)
+    """Extract text from OpenAI Responses API response → LangChain AIMessage.
 
-    parts = []
-    for item in response.output:
-        if item.type == "message":
-            for block in item.content:
-                if block.type == "output_text":
-                    parts.append(block.text)
-    return AIMessage(content="".join(parts))
+    Also extracts file_search and web_search annotations as metadata.
+    """
+    text = getattr(response, "output_text", "") or ""
+
+    if not text:
+        text_parts = []
+        for item in response.output:
+            if item.type == "message":
+                for block in item.content:
+                    if block.type == "output_text":
+                        text_parts.append(block.text)
+        text = "".join(text_parts)
+
+    # Extract annotations for source attribution
+    annotations = []
+    for item in getattr(response, "output", []):
+        if getattr(item, "type", None) != "message":
+            continue
+        for block in getattr(item, "content", []):
+            if getattr(block, "type", None) != "output_text":
+                continue
+            for ann in getattr(block, "annotations", []):
+                ann_type = getattr(ann, "type", None)
+                if ann_type == "file_citation":
+                    annotations.append({
+                        "type": "file_citation",
+                        "filename": getattr(ann, "filename", ""),
+                        "file_id": getattr(ann, "file_id", ""),
+                    })
+                elif ann_type == "url_citation":
+                    annotations.append({
+                        "type": "url_citation",
+                        "url": getattr(ann, "url", ""),
+                        "title": getattr(ann, "title", ""),
+                    })
+
+    msg = AIMessage(content=text)
+    if annotations:
+        msg.additional_kwargs["annotations"] = annotations
+    return msg
+
+
+def _build_openai_tools() -> list[dict]:
+    """Build the tools list for OpenAI Responses API requests."""
+    tools: list[dict] = []
+    if OPENAI_VECTOR_STORE_ID:
+        tools.append({
+            "type": "file_search",
+            "vector_store_ids": [OPENAI_VECTOR_STORE_ID],
+            "max_num_results": 10,
+        })
+    tools.append({
+        "type": "web_search_preview",
+    })
+    return tools
 
 
 def _openai_request_kwargs(messages) -> dict:
@@ -146,6 +198,7 @@ def _openai_request_kwargs(messages) -> dict:
         "store": True,
         "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
         "text": {"verbosity": OPENAI_VERBOSITY},
+        "tools": _build_openai_tools(),
     }
 
 
@@ -219,7 +272,14 @@ def _wait_for_openai_response_sync(client, response, deadline: float) -> AIMessa
             last_log_at = now
         if status == "completed":
             return _parse_openai_response(current)
-        if status in {"failed", "cancelled", "incomplete"}:
+        if status == "incomplete":
+            incomplete = getattr(current, "incomplete_details", None)
+            reason = getattr(incomplete, "reason", None) if incomplete else None
+            if reason == "max_output_tokens":
+                logger.warning("OpenAI response truncated (max_output_tokens), returning partial text")
+                return _parse_openai_response(current)
+            _raise_for_openai_terminal_state(current)
+        if status in {"failed", "cancelled"}:
             _raise_for_openai_terminal_state(current)
 
         response_id = getattr(current, "id", None)
@@ -255,7 +315,14 @@ async def _wait_for_openai_response_async(client, response, deadline: float) -> 
             last_log_at = now
         if status == "completed":
             return _parse_openai_response(current)
-        if status in {"failed", "cancelled", "incomplete"}:
+        if status == "incomplete":
+            incomplete = getattr(current, "incomplete_details", None)
+            reason = getattr(incomplete, "reason", None) if incomplete else None
+            if reason == "max_output_tokens":
+                logger.warning("OpenAI response truncated (max_output_tokens), returning partial text")
+                return _parse_openai_response(current)
+            _raise_for_openai_terminal_state(current)
+        if status in {"failed", "cancelled"}:
             _raise_for_openai_terminal_state(current)
 
         response_id = getattr(current, "id", None)

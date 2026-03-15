@@ -115,9 +115,22 @@ async def _synthesize(
         f"## Relevante Behauptungen\n{json.dumps(related_allegations, ensure_ascii=False)}\n\n"
         f"## Issues to check\n{json.dumps(issues_to_check, ensure_ascii=False)}\n\n"
         f"## Vorliegende Validierungshinweise\n{json.dumps(related_validation, ensure_ascii=False)}\n\n"
-        f"## Kommentarliteratur (StGB/StPO)\n{sub_q.get('rag_results', 'Nicht verfuegbar')}\n\n"
-        f"## Aktuelle Rechtsprechung\n{sub_q.get('search_results', 'Nicht verfuegbar')}"
     )
+
+    if provider == "openai":
+        user_msg += (
+            "## Recherche-Anweisung\n"
+            "Nutze das file_search-Tool, um in der StGB/StPO-Kommentarliteratur "
+            "nach relevanten Kommentierungen zu den betroffenen Normen zu suchen.\n"
+            "Nutze das web_search-Tool, um aktuelle deutsche Rechtsprechung und "
+            "Urteile zur Rechtsfrage zu finden.\n"
+            "Zitiere alle gefundenen Quellen konkret."
+        )
+    else:
+        user_msg += (
+            f"## Kommentarliteratur (StGB/StPO)\n{sub_q.get('rag_results', 'Nicht verfuegbar')}\n\n"
+            f"## Aktuelle Rechtsprechung\n{sub_q.get('search_results', 'Nicht verfuegbar')}"
+        )
 
     response = await llm.ainvoke([
         SystemMessage(content=SYSTEM_PROMPT),
@@ -137,16 +150,19 @@ async def _process_single(
 ) -> dict:
     """Process one sub-question end-to-end.
 
-    Step 1: RAG + Web Search in parallel
-    Step 2: Synthesis (needs both results)
+    When provider is "openai", GPT uses built-in file_search + web_search tools
+    directly, so manual RAGIE/Gemini retrieval is skipped.
     """
-    # Step 1 — retrieve commentary + case law concurrently
-    rag_results, search_results = await asyncio.gather(
-        _retrieve_rag(sub_q),
-        _search_case_law(sub_q, summary),
-    )
-
-    updated = {**sub_q, "rag_results": rag_results, "search_results": search_results}
+    if provider == "openai":
+        # OpenAI handles retrieval via built-in tools during synthesis
+        updated = {**sub_q, "rag_results": None, "search_results": None}
+    else:
+        # Gemini path: manual RAG + web search concurrently
+        rag_results, search_results = await asyncio.gather(
+            _retrieve_rag(sub_q),
+            _search_case_law(sub_q, summary),
+        )
+        updated = {**sub_q, "rag_results": rag_results, "search_results": search_results}
 
     # Step 2 — synthesize using both sources
     synthesis = await _synthesize(
